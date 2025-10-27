@@ -43,6 +43,8 @@ const defaultState = {
   nextTaskId: 1
 };
 
+const LOCAL_STORAGE_KEY = 'familia-app-state';
+
 const state = {
   users: {},
   categories: [],
@@ -52,6 +54,12 @@ const state = {
   selectedKidCategory: null,
   ready: false
 };
+
+let persistenceMode = 'firestore';
+let firebaseApp = null;
+let db = null;
+let appStateRef = null;
+let unsubscribeFirestore = null;
 
 const loginSection = document.getElementById('login-section');
 const adminSection = document.getElementById('admin-section');
@@ -97,18 +105,12 @@ const kidExpenseHistory = document.getElementById('kid-expense-history');
 const kidCategoryTabs = document.getElementById('kid-category-tabs');
 const kidTaskPanel = document.getElementById('kid-task-panel');
 
-ensureFirebaseConfigured();
-
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
-const appStateRef = doc(db, 'appState', 'global');
-
 let resolveInitialData;
 const initialDataPromise = new Promise(resolve => {
   resolveInitialData = resolve;
 });
 
-setupRealtimeSync();
+determinePersistenceMode();
 
 init().catch(error => {
   console.error('Error al iniciar la aplicación:', error);
@@ -118,7 +120,23 @@ init().catch(error => {
 });
 
 async function init() {
-  await ensureAppStateDocument();
+  if (persistenceMode === 'firestore') {
+    try {
+      await ensureAppStateDocument();
+    } catch (error) {
+      handlePersistenceFailure(error, 'No se pudo sincronizar con Firestore. Se usará almacenamiento local.');
+    }
+  }
+
+  if (persistenceMode === 'local' && !state.ready) {
+    applyAppState(loadLocalAppState());
+    finishInitialDataLoad();
+  }
+
+  if (persistenceMode === 'firestore') {
+    setupRealtimeSync();
+  }
+
   await initialDataPromise;
   setupLogin();
   setupTabs();
@@ -126,7 +144,7 @@ async function init() {
   refreshUI();
 }
 
-function ensureFirebaseConfigured() {
+function determinePersistenceMode() {
   const requiredKeys = ['apiKey', 'authDomain', 'projectId', 'appId'];
   const missingKeys = requiredKeys.filter(
     key => !firebaseConfig[key] || firebaseConfig[key].includes('REEMPLAZA')
@@ -135,14 +153,27 @@ function ensureFirebaseConfigured() {
   if (missingKeys.length > 0) {
     const message =
       'Configura firebase-config.js con las credenciales de tu proyecto de Firebase para activar la sincronización.';
+    console.warn(message);
     if (loginError) {
-      loginError.textContent = message;
+      loginError.textContent = `${message} Se usará almacenamiento local temporal.`;
     }
-    throw new Error(message);
+    activateLocalPersistence();
+    return;
+  }
+
+  try {
+    firebaseApp = initializeApp(firebaseConfig);
+    db = getFirestore(firebaseApp);
+    appStateRef = doc(db, 'appState', 'global');
+  } catch (error) {
+    handlePersistenceFailure(error, 'No se pudo inicializar Firebase. Se usará almacenamiento local.');
   }
 }
 
 async function ensureAppStateDocument() {
+  if (persistenceMode !== 'firestore') {
+    return;
+  }
   const snapshot = await getDoc(appStateRef);
   if (!snapshot.exists()) {
     await setDoc(appStateRef, JSON.parse(JSON.stringify(defaultState)));
@@ -150,32 +181,147 @@ async function ensureAppStateDocument() {
 }
 
 function setupRealtimeSync() {
-  onSnapshot(
+  if (persistenceMode !== 'firestore') {
+    return;
+  }
+  if (typeof unsubscribeFirestore === 'function') {
+    unsubscribeFirestore();
+  }
+
+  unsubscribeFirestore = onSnapshot(
     appStateRef,
     snapshot => {
       if (!snapshot.exists()) {
         return;
       }
       const data = snapshot.data();
-      state.users = data.users || {};
-      state.categories = data.categories || [];
-      state.tasks = data.tasks || [];
-      state.nextTaskId = data.nextTaskId || 1;
+      saveLocalAppState(data);
+      applyAppState(data);
+      finishInitialDataLoad();
       refreshUI();
-      if (!state.ready) {
-        state.ready = true;
-        if (typeof resolveInitialData === 'function') {
-          resolveInitialData();
-        }
-      }
     },
     error => {
       console.error('Error al sincronizar con Firestore:', error);
-      if (loginError && !loginError.textContent) {
-        loginError.textContent = 'Error al sincronizar con la base de datos. Revisa la consola para más detalles.';
-      }
+      handlePersistenceFailure(error, 'Se perdió la conexión con Firestore. Se usará almacenamiento local.');
     }
   );
+}
+
+function finishInitialDataLoad() {
+  if (!state.ready) {
+    state.ready = true;
+    if (typeof resolveInitialData === 'function') {
+      resolveInitialData();
+    }
+  }
+}
+
+function activateLocalPersistence() {
+  persistenceMode = 'local';
+  if (typeof unsubscribeFirestore === 'function') {
+    unsubscribeFirestore();
+    unsubscribeFirestore = null;
+  }
+}
+
+function handlePersistenceFailure(error, message) {
+  console.error(message || 'Error de persistencia', error);
+  if (persistenceMode === 'firestore') {
+    if (loginError && !loginError.textContent) {
+      loginError.textContent =
+        'No se pudo conectar con la nube. Trabajarás con datos locales en este navegador.';
+    }
+    activateLocalPersistence();
+    const localState = loadLocalAppState();
+    applyAppState(localState);
+    finishInitialDataLoad();
+    refreshUI();
+  }
+}
+
+function shouldFallbackToLocal(error) {
+  if (!error) {
+    return false;
+  }
+  if (typeof error.code === 'string') {
+    const fallbackCodes = new Set([
+      'permission-denied',
+      'unauthenticated',
+      'unavailable',
+      'failed-precondition',
+      'deadline-exceeded',
+      'internal'
+    ]);
+    if (fallbackCodes.has(error.code)) {
+      return true;
+    }
+  }
+  const message = String(error.message || '').toLowerCase();
+  if (message.includes('permission') || message.includes('firestore') || message.includes('network')) {
+    return true;
+  }
+  return false;
+}
+
+function loadLocalAppState() {
+  if (typeof localStorage === 'undefined') {
+    return deepClone(defaultState);
+  }
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (!raw) {
+      const initial = deepClone(defaultState);
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(initial));
+      return initial;
+    }
+    const parsed = JSON.parse(raw);
+    return normalizeAppState(parsed);
+  } catch (error) {
+    console.warn('No se pudo leer el estado local. Se reiniciará con los valores por defecto.', error);
+    return deepClone(defaultState);
+  }
+}
+
+function saveLocalAppState(data) {
+  if (typeof localStorage === 'undefined') {
+    return;
+  }
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(normalizeAppState(data)));
+  } catch (error) {
+    console.warn('No se pudo guardar el estado local.', error);
+  }
+}
+
+function normalizeAppState(data) {
+  const safeData = deepClone(data || {});
+  const normalized = {
+    ...safeData,
+    users: safeData.users && typeof safeData.users === 'object'
+      ? safeData.users
+      : deepClone(defaultState.users),
+    categories: Array.isArray(safeData.categories)
+      ? safeData.categories
+      : [...defaultState.categories],
+    tasks: Array.isArray(safeData.tasks) ? safeData.tasks : [],
+    nextTaskId: typeof safeData.nextTaskId === 'number' ? safeData.nextTaskId : 1
+  };
+  return normalized;
+}
+
+function applyAppState(data) {
+  const normalized = normalizeAppState(data);
+  state.users = normalized.users;
+  state.categories = normalized.categories;
+  state.tasks = normalized.tasks;
+  state.nextTaskId = normalized.nextTaskId;
+}
+
+function deepClone(value) {
+  if (typeof value === 'undefined') {
+    return undefined;
+  }
+  return JSON.parse(JSON.stringify(value));
 }
 
 function setupLogin() {
@@ -310,19 +456,14 @@ function setupForms() {
 }
 
 async function addTask({ title, description, category, username }) {
-  await runTransaction(db, async transaction => {
-    const snapshot = await transaction.get(appStateRef);
-    if (!snapshot.exists()) {
-      throw new Error('No se encontró el estado de la aplicación.');
-    }
-    const data = snapshot.data();
-    const users = data.users || {};
+  await updateAppState(current => {
+    const users = current.users || {};
     if (!users[username]) {
       throw new Error('El usuario seleccionado no existe.');
     }
 
-    const nextTaskId = data.nextTaskId || 1;
-    const tasks = Array.isArray(data.tasks) ? [...data.tasks] : [];
+    const nextTaskId = current.nextTaskId || 1;
+    const tasks = Array.isArray(current.tasks) ? [...current.tasks] : [];
     tasks.push({
       id: nextTaskId,
       title,
@@ -335,37 +476,31 @@ async function addTask({ title, description, category, username }) {
       rewardGranted: false
     });
 
-    transaction.update(appStateRef, {
+    return {
+      ...current,
       tasks,
       nextTaskId: nextTaskId + 1
-    });
+    };
   });
 }
 
 async function addCategory(newCategory) {
-  await runTransaction(db, async transaction => {
-    const snapshot = await transaction.get(appStateRef);
-    if (!snapshot.exists()) {
-      throw new Error('No se encontró el estado de la aplicación.');
-    }
-    const data = snapshot.data();
-    const categories = Array.isArray(data.categories) ? [...data.categories] : [];
+  await updateAppState(current => {
+    const categories = Array.isArray(current.categories) ? [...current.categories] : [];
     if (categories.includes(newCategory)) {
-      return;
+      return current;
     }
     categories.push(newCategory);
-    transaction.update(appStateRef, { categories });
+    return {
+      ...current,
+      categories
+    };
   });
 }
 
 async function registerWalletMovement(username, amount, description, type) {
-  await runTransaction(db, async transaction => {
-    const snapshot = await transaction.get(appStateRef);
-    if (!snapshot.exists()) {
-      throw new Error('No se encontró el estado de la aplicación.');
-    }
-    const data = snapshot.data();
-    const users = { ...(data.users || {}) };
+  await updateAppState(current => {
+    const users = { ...(current.users || {}) };
     const user = users[username];
     if (!user) {
       throw new Error('El usuario no existe.');
@@ -396,45 +531,37 @@ async function registerWalletMovement(username, amount, description, type) {
       wallet
     };
 
-    transaction.update(appStateRef, { users });
+    return {
+      ...current,
+      users
+    };
   });
 }
 
 async function updateTaskCompletion(taskId, completed) {
-  await runTransaction(db, async transaction => {
-    const snapshot = await transaction.get(appStateRef);
-    if (!snapshot.exists()) {
-      throw new Error('No se encontró el estado de la aplicación.');
-    }
-    const data = snapshot.data();
-    const tasks = Array.isArray(data.tasks) ? data.tasks.map(task => {
-      if (task.id !== taskId) return task;
-      return {
-        ...task,
-        completed
-      };
-    }) : [];
-    transaction.update(appStateRef, { tasks });
+  await updateAppState(current => {
+    const tasks = Array.isArray(current.tasks)
+      ? current.tasks.map(task => (task.id !== taskId ? task : { ...task, completed }))
+      : [];
+    return {
+      ...current,
+      tasks
+    };
   });
 }
 
 async function saveExamResult({ taskId, username, score, reward }) {
-  await runTransaction(db, async transaction => {
-    const snapshot = await transaction.get(appStateRef);
-    if (!snapshot.exists()) {
-      throw new Error('No se encontró el estado de la aplicación.');
-    }
-    const data = snapshot.data();
-    const existingTasks = Array.isArray(data.tasks) ? [...data.tasks] : [];
+  await updateAppState(current => {
+    const existingTasks = Array.isArray(current.tasks) ? [...current.tasks] : [];
     const targetTask = existingTasks.find(task => task.id === taskId);
     if (!targetTask) {
       throw new Error('La tarea seleccionada no existe.');
     }
     if (targetTask.rewardGranted) {
-      return;
+      return current;
     }
 
-    const users = { ...(data.users || {}) };
+    const users = { ...(current.users || {}) };
     const user = users[username];
     if (!user) {
       throw new Error('El usuario no existe.');
@@ -477,10 +604,11 @@ async function saveExamResult({ taskId, username, score, reward }) {
       wallet
     };
 
-    transaction.update(appStateRef, {
+    return {
+      ...current,
       users,
       tasks: updatedTasks
-    });
+    };
   });
 }
 
@@ -601,6 +729,15 @@ function showBasicPanel(user) {
 }
 
 function renderKidDashboard(user) {
+  if (!user) {
+    kidName.textContent = '¡Hola!';
+    kidBalance.textContent = '0.00';
+    kidIncomeHistory.innerHTML = '';
+    kidExpenseHistory.innerHTML = '';
+    kidCategoryTabs.innerHTML = '<p>No hay usuario seleccionado.</p>';
+    kidTaskPanel.innerHTML = '';
+    return;
+  }
   kidName.textContent = `Hola, ${user.displayName} 👋`;
   renderKidWallet(user);
   if (!state.selectedKidCategory || !state.categories.includes(state.selectedKidCategory)) {
@@ -832,6 +969,37 @@ function refreshUI() {
   if (updatedUser.role === 'basic' && !basicSection.classList.contains('hidden')) {
     renderKidDashboard(updatedUser);
   }
+}
+
+async function updateAppState(mutator) {
+  if (persistenceMode === 'firestore') {
+    try {
+      await runTransaction(db, async transaction => {
+        const snapshot = await transaction.get(appStateRef);
+        if (!snapshot.exists()) {
+          throw new Error('No se encontró el estado de la aplicación.');
+        }
+        const current = normalizeAppState(snapshot.data());
+        const updated = normalizeAppState(mutator(deepClone(current)) || current);
+        transaction.set(appStateRef, updated);
+      });
+      return;
+    } catch (error) {
+      if (shouldFallbackToLocal(error)) {
+        handlePersistenceFailure(error, 'Error al actualizar en Firestore. Se usará almacenamiento local.');
+        if (persistenceMode === 'local') {
+          return updateAppState(mutator);
+        }
+      }
+      throw error;
+    }
+  }
+
+  const current = loadLocalAppState();
+  const updated = normalizeAppState(mutator(deepClone(current)) || current);
+  saveLocalAppState(updated);
+  applyAppState(updated);
+  refreshUI();
 }
 
 function formatCurrency(value) {
