@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Familia - Gestor de tareas y recompensas</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <section id="login-section" class="login-screen">
+      <div class="login-card">
+        <h1>Bienvenido</h1>
+        <p class="subtitle">Introduce tu usuario y tu contraseña.</p>
+        <form id="login-form">
+          <label for="username">Usuario</label>
+          <input type="text" id="username" required autocomplete="username" />
+
+          <label for="password">Contraseña</label>
+          <input type="password" id="password" required autocomplete="current-password" />
+
+          <button type="submit" class="primary-btn">Entrar</button>
+          <p id="login-error" class="error-message" aria-live="polite"></p>
+        </form>
+      </div>
+    </section>
+
+    <section id="admin-section" class="hidden dashboard">
+      <header class="dashboard-header">
+        <h1>Panel del administrador</h1>
+        <button id="logout-admin" class="secondary-btn">Cerrar sesión</button>
+      </header>
+
+      <div class="dashboard-body">
+        <aside class="dashboard-sidebar">
+          <nav>
+            <button class="tab-button active" data-tab="tasks-tab">Tareas</button>
+            <button class="tab-button" data-tab="categories-tab">Apartados</button>
+            <button class="tab-button" data-tab="wallet-tab">Reglas de monedero</button>
+            <button class="tab-button" data-tab="overview-tab">Resumen de usuarios</button>
+          </nav>
+        </aside>
+
+        <main class="dashboard-content">
+          <section id="tasks-tab" class="tab-panel active">
+            <h2>Crear nueva tarea</h2>
+            <form id="task-form" class="card">
+              <div class="form-grid">
+                <label for="task-title">Título</label>
+                <input type="text" id="task-title" placeholder="Ej: Repasar tabla del 7" required />
+
+                <label for="task-description">Descripción</label>
+                <textarea id="task-description" rows="3" placeholder="Explica de forma breve la tarea" required></textarea>
+
+                <label for="task-category">Apartado</label>
+                <select id="task-category"></select>
+
+                <label for="task-user">Asignar a</label>
+                <select id="task-user"></select>
+              </div>
+              <p class="hint">Recuerda que los apartados ayudan a los niños a encontrar sus tareas rápido.</p>
+              <button type="submit" class="primary-btn">Crear tarea</button>
+            </form>
+
+            <h3>Tareas creadas</h3>
+            <div id="admin-task-list" class="card task-list"></div>
+          </section>
+
+          <section id="categories-tab" class="tab-panel">
+            <h2>Apartados disponibles</h2>
+            <ul id="category-list" class="pill-list"></ul>
+            <form id="category-form" class="card inline-form">
+              <label for="new-category">Crear nuevo apartado</label>
+              <div class="inline-input">
+                <input type="text" id="new-category" placeholder="Nombre del apartado" required />
+                <button type="submit" class="primary-btn">Añadir</button>
+              </div>
+            </form>
+          </section>
+
+          <section id="wallet-tab" class="tab-panel">
+            <h2>Reglas de ingresos y gastos</h2>
+            <div class="card stack">
+              <form id="income-form" class="wallet-form">
+                <h3>Ingreso mensual</h3>
+                <label for="income-user">Usuario</label>
+                <select id="income-user"></select>
+                <label for="income-amount">Cantidad (€)</label>
+                <input type="number" id="income-amount" min="0" step="0.5" required />
+                <label for="income-description">Descripción</label>
+                <input type="text" id="income-description" placeholder="Ej: Mes de abril" required />
+                <button type="submit" class="primary-btn">Guardar ingreso</button>
+              </form>
+
+              <form id="fixed-expense-form" class="wallet-form">
+                <h3>Gasto fijo</h3>
+                <label for="fixed-user">Usuario</label>
+                <select id="fixed-user"></select>
+                <label for="fixed-amount">Cantidad (€)</label>
+                <input type="number" id="fixed-amount" min="0" step="0.5" required />
+                <label for="fixed-description">Descripción</label>
+                <input type="text" id="fixed-description" placeholder="Ej: Material escolar" required />
+                <button type="submit" class="secondary-btn">Registrar gasto</button>
+              </form>
+
+              <form id="extra-expense-form" class="wallet-form">
+                <h3>Gasto extra</h3>
+                <label for="extra-user">Usuario</label>
+                <select id="extra-user"></select>
+                <label for="extra-amount">Cantidad (€)</label>
+                <input type="number" id="extra-amount" min="0" step="0.5" required />
+                <label for="extra-description">Descripción</label>
+                <input type="text" id="extra-description" placeholder="Ej: Salida al cine" required />
+                <button type="submit" class="accent-btn">Crear gasto extra</button>
+              </form>
+            </div>
+          </section>
+
+          <section id="overview-tab" class="tab-panel">
+            <h2>Resumen de monedero</h2>
+            <div id="wallet-overview" class="card"></div>
+          </section>
+        </main>
+      </div>
+    </section>
+
+    <section id="basic-section" class="hidden dashboard kid-dashboard">
+      <header class="dashboard-header kid-header">
+        <div>
+          <h1 id="kid-name"></h1>
+          <p class="kid-subtitle">¡Vamos a revisar tus tareas y tu monedero mágico!</p>
+        </div>
+        <button id="logout-basic" class="secondary-btn">Cerrar sesión</button>
+      </header>
+
+      <main class="kid-main">
+        <section class="wallet-card">
+          <h2>Mi monedero</h2>
+          <p class="wallet-amount"><span id="kid-balance">0</span> €</p>
+          <div class="wallet-history">
+            <div>
+              <h3>Ingresos</h3>
+              <ul id="kid-income-history"></ul>
+            </div>
+            <div>
+              <h3>Gastos</h3>
+              <ul id="kid-expense-history"></ul>
+            </div>
+          </div>
+        </section>
+
+        <section class="kid-tasks">
+          <h2>Mis apartados</h2>
+          <div id="kid-category-tabs" class="kid-tabs"></div>
+          <div id="kid-task-panel" class="kid-task-panel"></div>
+        </section>
+      </main>
+    </section>
+  </div>
+
+  <template id="task-template">
+    <article class="task-item">
+      <div class="task-info">
+        <h4 class="task-title"></h4>
+        <p class="task-description"></p>
+        <p class="task-meta"></p>
+      </div>
+      <div class="task-actions"></div>
+    </article>
+  </template>
+
+  <script src="script.js" type="module"></script>
+</body>
+</html>
