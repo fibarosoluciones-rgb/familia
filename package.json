@@ -1,0 +1,14 @@
+{
+  "name": "familia",
+  "version": "1.0.0",
+  "description": "Repositorio inicial para el sistema familia.",
+  "main": "script.js",
+  "scripts": {
+    "verify:users": "node verifyUsers.js",
+    "test": "npm run verify:users"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

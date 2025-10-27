@@ -1,27 +1,31 @@
+function createUser({ username, password, role, displayName }) {
+  return {
+    username,
+    password,
+    role,
+    displayName,
+    wallet: {
+      balance: 0,
+      incomes: [],
+      expenses: []
+    }
+  };
+}
+
 const state = {
   users: {
-    admin: {
+    admin: createUser({
       username: 'admin',
       password: 'admin123',
       role: 'admin',
-      displayName: 'Administrador',
-      wallet: {
-        balance: 0,
-        incomes: [],
-        expenses: []
-      }
-    },
-    carlota: {
+      displayName: 'Administrador'
+    }),
+    carlota: createUser({
       username: 'carlota',
       password: 'carlota123',
       role: 'basic',
-      displayName: 'Carlota',
-      wallet: {
-        balance: 0,
-        incomes: [],
-        expenses: []
-      }
-    }
+      displayName: 'Carlota'
+    })
   },
   categories: ['Exámenes', 'Tareas del hogar', 'Gastos fijos', 'Gastos extras'],
   tasks: [],
